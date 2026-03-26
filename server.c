@@ -1,30 +1,29 @@
+// server.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <winsock2.h>
+#pragma comment(lib,"ws2_32.lib")
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
 
-// Checksum function
-unsigned int checksum(char *data)
-{
+unsigned int checksum(char *data, int len) {
     unsigned int sum = 0;
-    for(int i = 0; data[i] != '\0'; i++)
+    for(int i = 0; i < len; i++)
         sum += data[i];
     return sum;
 }
 
 int main() {
-
     WSADATA wsa;
     WSAStartup(MAKEWORD(2,2), &wsa);
 
-    int sockfd;
-    char buffer[BUFFER_SIZE];
-
+    SOCKET sockfd;
     struct sockaddr_in server_addr, client_addr;
     int addr_len = sizeof(client_addr);
+
+    char buffer[BUFFER_SIZE];
 
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -34,38 +33,48 @@ int main() {
 
     bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
 
-    printf("Server running on port %d...\n", PORT);
+    FILE *fp = fopen("received_file.txt", "wb");
 
-    while(1)
-    {
+    int expected_seq = 0;
+
+    printf("Server listening...\n");
+
+    while(1) {
         memset(buffer, 0, BUFFER_SIZE);
 
-        recvfrom(sockfd, buffer, BUFFER_SIZE, 0,
-                 (struct sockaddr*)&client_addr, &addr_len);
+        int recv_len = recvfrom(sockfd, buffer, BUFFER_SIZE, 0,
+                                (struct sockaddr*)&client_addr, &addr_len);
 
-        char msg[BUFFER_SIZE];
-        unsigned int received_checksum;
+        int seq;
+        unsigned int recv_checksum;
+        char data[900];
 
-        sscanf(buffer, "%[^|]|%u", msg, &received_checksum);
+        sscanf(buffer, "%d|%[^|]|%u", &seq, data, &recv_checksum);
 
-        unsigned int calculated_checksum = checksum(msg);
+        unsigned int calc_checksum = checksum(data, strlen(data));
 
-        printf("\nClient %s:%d says: %s\n",
-               inet_ntoa(client_addr.sin_addr),
-               ntohs(client_addr.sin_port),
-               msg);
+        if(seq == expected_seq && calc_checksum == recv_checksum) {
+            fwrite(data, 1, strlen(data), fp);
+            printf("Received packet %d OK\n", seq);
+            expected_seq++;
+        } else {
+            printf("Packet error or out of order\n");
+        }
 
-        if(calculated_checksum == received_checksum)
-            printf("Checksum verified: Data integrity OK\n");
-        else
-            printf("Checksum mismatch! Data corrupted\n");
-
-        char ack[] = "ACK from server";
+        // Send ACK
+        char ack[50];
+        sprintf(ack, "ACK|%d", seq);
 
         sendto(sockfd, ack, strlen(ack), 0,
                (struct sockaddr*)&client_addr, addr_len);
+
+        // End condition (simple)
+        if(strcmp(data, "EOF") == 0)
+            break;
     }
 
+    fclose(fp);
     closesocket(sockfd);
     WSACleanup();
+    return 0;
 }
