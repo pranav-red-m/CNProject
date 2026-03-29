@@ -1,4 +1,6 @@
-// client.c
+/*This is Code for CN Project, client sided code. WSA is used as before needing to use 
+sockets we need to initialize the networking system.*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,14 +11,16 @@
 #define BUFFER_SIZE 1024
 #define CHUNK_SIZE 512
 
-unsigned int checksum(char *data, int len) {
+unsigned int checksum(char *data, int len) 
+{
     unsigned int sum = 0;
     for(int i = 0; i < len; i++)
         sum += data[i];
     return sum;
 }
 
-int main() {
+int main() 
+{
     WSADATA wsa;
     WSAStartup(MAKEWORD(2,2), &wsa);
 
@@ -29,17 +33,28 @@ int main() {
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
+    server_addr.sin_port = htons(PORT); //Host to Network Short cause different systems use differend endianess
 
     char ip[50];
-    printf("Enter server IP: ");
+    printf("Enter server IP: "); 
     scanf("%s", ip);
 
     server_addr.sin_addr.s_addr = inet_addr(ip);
-
-    FILE *fp = fopen("file.txt", "rb");
+    
+    char start_msg[] = "START|file";
+    sendto(sockfd, start_msg, strlen(start_msg), 0,
+           (struct sockaddr*)&server_addr, sizeof(server_addr));
+    Sleep(300);
+    recvfrom(sockfd, buffer, BUFFER_SIZE, 0, NULL, NULL);
 
     int seq = 0;
+    sscanf(buffer, "RESUME|%d", &seq);
+
+    printf("Resuming from packet %d\n", seq);
+
+    FILE *fp = fopen("file.txt", "rb");
+    fseek(fp, seq * CHUNK_SIZE, SEEK_SET);
+
     char data[CHUNK_SIZE];
 
     while(1) {
@@ -57,14 +72,9 @@ int main() {
             sendto(sockfd, packet, strlen(packet), 0,
                    (struct sockaddr*)&server_addr, sizeof(server_addr));
 
-            printf("Sent packet %d\n", seq);
-
             memset(buffer, 0, BUFFER_SIZE);
 
-            struct timeval tv;
-            tv.tv_sec = 2;
-            tv.tv_usec = 0;
-
+            struct timeval tv = {2, 0};
             setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO,
                        (const char*)&tv, sizeof(tv));
 
@@ -74,12 +84,7 @@ int main() {
                 int ack_seq;
                 sscanf(buffer, "ACK|%d", &ack_seq);
 
-                if(ack_seq == seq) {
-                    printf("ACK received for %d\n", seq);
-                    break;
-                }
-            } else {
-                printf("Timeout, resending packet %d\n", seq);
+                if(ack_seq == seq) break;
             }
         }
 
